@@ -1,5 +1,10 @@
+<<<<<<< HEAD:src/vai_library/bevdet_multirunner/src/bevdet.cpp
+/*
+ * Copyright 2022-2023 Advanced Micro Devices Inc.
+=======
 /**
  * Copyright 2022 Xilinx Inc.
+>>>>>>> origin/master:dpucvdx8g-trd/xvdpu_ip/psmnet/graphs/upsample/params.h
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.

@@ -18,6 +18,7 @@
 
 #include "vitis/ai/parse_value.hpp"
 #include "xir/buffer_object.hpp"
+#include "xir/graph/x"
 using namespace std;
 #include <vitis/ai/env_config.hpp>
 DEF_ENV_PARAM(DEVICE_ID, "0");
