@@ -22,13 +22,12 @@
 #include <string>
 #include <vector>
 #include <xir/graph/subgraph.hpp>
-#include <xir/xrt_device_handle.hpp>
 namespace py = pybind11;
 std::string xmodel_to_txt(std::string xmodel);
 py::dict xdputil_query();
 py::dict xdputil_status();
-std::vector<uint32_t> read_register(const xir::XrtDeviceHandle* handle,
-                                    const std::string& cu_name, size_t cu_index,
+std::vector<uint32_t> read_register(void* handle, uint32_t ip_index,
+                                    uint64_t cu_base_addr,
                                     const std::vector<uint32_t>& addrs);
 std::vector<std::string> xilinx_version(std::vector<std::string> so_names);
 std::vector<std::string> xilinx_version2(std::vector<std::string> so_names);

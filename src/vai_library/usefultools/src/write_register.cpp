@@ -20,19 +20,38 @@
 #include <xir/xrt_device_handle.hpp>
 
 #include "parse_value.hpp"
+#include "xrt_xcl_read.hpp"
+using namespace std;
+void set_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
+             uint64_t cu_base_addr, uint32_t offset, uint32_t value) {
+  auto read_result =
+      xrtXclWrite(xcl_handle, ip_index, offset, cu_base_addr, value);
 
-void xdpu_set_reg(const XrtDeviceHandle* handle, const std::string& cu_name,
-                  size_t cu_index, const std::string set_reg_conf) {
+  CHECK_EQ(read_result, 0) << "xrtXclWrite has error!";
+}
+
+uint32_t get_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
+                 uint64_t cu_base_addr, uint32_t offset) {
+  uint32_t value = 0;
+  auto read_result =
+      xrtXclRead(xcl_handle, ip_index, offset, cu_base_addr, &value);
+
+  CHECK_EQ(read_result, 0) << "xrtXclRead has error!";
+  return value;
+}
+
+void xdpu_set_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
+                  uint64_t cu_base_addr, string set_reg_conf) {
   struct reg {
     uint32_t addr;
     uint32_t value;
-    std::string name;
+    string name;
   };
   vector<reg> regs;
   ifstream stream(set_reg_conf);
-  std::string name;
-  std::string offset_add;
-  std::string offset_val;
+  string name;
+  string offset_add;
+  string offset_val;
   while ((stream >> name >> offset_add >> offset_val).good()) {
     uint64_t offset_add2;
     uint64_t offset_val2;
@@ -44,9 +63,9 @@ void xdpu_set_reg(const XrtDeviceHandle* handle, const std::string& cu_name,
   }
   stream.close();
   for (const auto& reg : regs) {
-    auto before_val = handle->read_register(cu_name, cu_index, reg.addr);
-    handle->write_register(cu_name, cu_index, reg.addr, reg.value);
-    auto after_val = handle->read_register(cu_name, cu_index, reg.addr);
+    auto befor_val = get_reg(xcl_handle, ip_index, cu_base_addr, reg.addr);
+    set_reg(xcl_handle, ip_index, cu_base_addr, reg.addr, reg.value);
+    auto after_val = get_reg(xcl_handle, ip_index, cu_base_addr, reg.addr);
     LOG_IF(INFO, true) << "addr 0x" << hex << reg.addr << "\t" << setfill(' ')
                        << "before 0x" << hex << setw(6) << left << befor_val
                        << " " << dec << setw(6) << right << befor_val << "\t"
@@ -64,10 +83,13 @@ int main(int argc, char* argv[]) {
     cout << "eg: " << argv[0] << " /usr/share/vart/reg.conf dpu 0" << endl;
     return 1;
   }
-  std::string set_reg_conf = argv[1];
+  string set_reg_conf = argv[1];
   auto cu_name = std::string(argv[2]);
-  auto cu_index = std::stoi(std::string(argv[3]));
+  auto index = std::stoi(std::string(argv[3]));
   auto h = xir::XrtDeviceHandle::get_instance();
-  xdpu_set_reg(h, cu_name, cu_index, set_reg_conf);
+  LOG(INFO) << "h->get_handle() " << h->get_handle(cu_name, index) << " "  //
+      ;
+  xdpu_set_reg(h->get_handle(cu_name, index), h->get_cu_index(cu_name, index),
+               h->get_cu_addr(cu_name, index), set_reg_conf);
   return 0;
 }

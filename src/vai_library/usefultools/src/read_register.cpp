@@ -15,9 +15,12 @@
  */
 #include <glog/logging.h>
 
+#include <vitis/ai/env_config.hpp>
 #include <vitis/ai/profiling.hpp>
 
 #include "tools_extra_ops.hpp"
+
+DEF_ENV_PARAM(DEBUG_TOOLS, "0");
 
 #ifdef ENABLE_XRT
 #include <iomanip>
@@ -25,22 +28,33 @@
 #include <xir/xrt_device_handle.hpp>
 
 #include "parse_value.hpp"
+#include "xrt_xcl_read.hpp"
 
-std::vector<uint32_t> read_register(const xir::XrtDeviceHandle* handle,
-                                    const std::string& cu_name, size_t cu_index,
+uint32_t get_reg(xclDeviceHandle xcl_handle, uint32_t ip_index,
+                 uint64_t cu_base_addr, uint32_t offset) {
+  uint32_t value = 0;
+  auto read_result =
+      xrtXclRead(xcl_handle, ip_index, offset, cu_base_addr, &value);
+
+  CHECK_EQ(read_result, 0) << "xrtXclRead has error!";
+  return value;
+}
+
+std::vector<uint32_t> read_register(void* handle, uint32_t ip_index,
+                                    uint64_t cu_base_addr,
                                     const std::vector<uint32_t>& addrs) {
   __TIC__(READ_REGISTER)
 
   std::vector<uint32_t> values;
   for (auto addr : addrs) {
-    values.push_back(handle->read_register(cu_name, cu_index, addr));
+    values.push_back(get_reg(handle, ip_index, cu_base_addr, addr));
   }
   __TOC__(READ_REGISTER)
   return values;
 }
 #else
-std::vector<uint32_t> read_register(const xir::XrtDeviceHandle* handle,
-                                    const std::string& cu_name, size_t cu_index,
+std::vector<uint32_t> read_register(void* handle, uint32_t ip_index,
+                                    uint64_t cu_base_addr,
                                     const std::vector<uint32_t>& addrs) {
   LOG(INFO) << "xrt not found ";
   return std::vector<uint32_t>();

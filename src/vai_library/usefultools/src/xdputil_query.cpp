@@ -23,9 +23,10 @@
 #include <vitis/ai/profiling.hpp>
 #include <vitis/ai/target_factory.hpp>
 #include <xir/device_memory.hpp>
+#include <xir/xrt_device_handle.hpp>
 
-#include "PhysicalMemory.hpp"
 #include "tools_extra_ops.hpp"
+#include "PhysicalMemory.hpp"
 typedef uint64_t u64;
 typedef uint32_t u32;
 #define DPU_NUM(x) (((x)&0x0f) << 0)
@@ -58,14 +59,17 @@ struct device_info_struct {
   std::string dpu_arch_type;
   std::string dpu_arch;
   std::string cu_name;
-  xir::XrtDeviceHandle* cu_handle;
+  void* cu_handle;
+  uint64_t cu_addr;
   uint64_t cu_idx;
+  uint64_t core_idx;
   uint64_t device_id;
+  uint64_t cu_mask;
 };
 
 class base_device {
  public:
-  virtual ~base_device() {}
+  virtual ~base_device(){}
   virtual py::dict get_public_data(const device_info_struct& info,
                                    size_t core_count) {
     return py::dict();
@@ -74,7 +78,7 @@ class base_device {
   virtual py::dict read_dpu_register(const device_info_struct& info) {
     py::dict res;
     res["Unsupported IP, fingerprint"] = to_string(info.fingerprint, std::hex);
-    res["name"] = "DPU Registers Core " + std::to_string(info.cu_idx);
+    res["name"] = "DPU Registers Core " + std::to_string(info.core_idx);
     return res;
   }
 };
@@ -104,7 +108,6 @@ class DPUCZDX8G_device : public base_device {
   DPUCZDX8G_device(std::vector<std::string> key_i = {},
                    std::vector<uint32_t> addr_i = {});
   uint32_t read_aie_reg_value(int addr);
-
  private:
   uint32_t get_aie_freq(std::string dpuarch);
   std::vector<std::string> key;
@@ -164,40 +167,35 @@ void device_info(xir::XrtDeviceHandle* h,
   auto cu_name = std::string("");
   infos.resize(h->get_num_of_cus(cu_name));
   std::vector<py::dict> result;
-  auto i = 0u;
+  int i = 0;
   for (auto& info : infos) {
     info.device_id = h->get_device_id(cu_name, i);
     info.cu_name = h->get_cu_full_name(cu_name, i);
-    auto cu_num = h->get_num_of_cus(info.cu_name);
-    // info.cu_name is full cu name which should be unique in xclbin
-    CHECK_EQ(cu_num, 1) << "cu full name " << info.cu_name
-                        << " is duplicated in xclbin";
-    info.cu_idx = i;
-    if (info.cu_name.find("DPU") != std::string::npos ||
-        info.cu_name.find("dpu") != std::string::npos) {
-      info.fingerprint = h->get_cu_fingerprint(cu_name, i);
-      info.cu_handle = h;
+    info.core_idx = i;
+    if (info.cu_name.find("DPU") != std::string::npos) {
+      info.fingerprint = h->get_fingerprint(cu_name, i);
+      info.cu_handle = h->get_handle(cu_name, i);
+      info.cu_addr = h->get_cu_addr(cu_name, i);
+      info.cu_idx = h->get_cu_index(cu_name, i);
+      info.cu_mask = h->get_cu_mask(cu_name, i);
       auto target = vitis::ai::target_factory()->create(info.fingerprint);
       info.dpu_arch_type = target.type();
       info.dpu_arch = target.name();
-      if (info.dpu_arch_type == "DPUCZDX8G") {
-        info.device = std::shared_ptr<base_device>(new DPUCZDX8G_device());
-      } else if (info.dpu_arch_type == "DPUCVDX8G") {
-        info.device = std::shared_ptr<base_device>(new DPUCVDX8G_device());
-      } else if (info.dpu_arch_type == "DPUCAHX8H") {
-        info.device = std::shared_ptr<base_device>(new DPUCAHX8H_device());
-      } else if (info.dpu_arch_type == "DPUCVDX8H") {
-        info.device = std::shared_ptr<base_device>(new DPUCVDX8H_device());
-      } else if (info.dpu_arch_type == "DPUCV2DX8G") {
-        info.device = std::shared_ptr<base_device>(new DPUCV2DX8G_device());
-      } else {
-        info.device = std::shared_ptr<base_device>(new base_device());
-        LOG(ERROR) << "Unsupported platform fingerprint: " << info.fingerprint
-                   << ", cu_idx: " << info.cu_idx;
-      }
+    }
+    if (info.dpu_arch_type == "DPUCZDX8G") {
+      info.device = std::shared_ptr<base_device>(new DPUCZDX8G_device());
+    } else if (info.dpu_arch_type == "DPUCVDX8G") {
+      info.device = std::shared_ptr<base_device>(new DPUCVDX8G_device());
+    } else if (info.dpu_arch_type == "DPUCAHX8H") {
+      info.device = std::shared_ptr<base_device>(new DPUCAHX8H_device());
+    } else if (info.dpu_arch_type == "DPUCVDX8H") {
+      info.device = std::shared_ptr<base_device>(new DPUCVDX8H_device());
+    } else if (info.dpu_arch_type == "DPUCV2DX8G") {
+      info.device = std::shared_ptr<base_device>(new DPUCV2DX8G_device());
     } else {
-      // initialize for other kernels like sfm
       info.device = std::shared_ptr<base_device>(new base_device());
+      LOG(ERROR) << "Unsupported platform fingerprint: " << info.fingerprint
+                 << ", cu_idx: " << info.core_idx;
     }
     i++;
   }
@@ -314,10 +312,12 @@ py::dict base_device::get_private_data(const device_info_struct& info) {
   py::dict res;
   res["fingerprint"] = to_string(info.fingerprint, std::hex);
   res["cu_handle"] = to_string((uint64_t)info.cu_handle, std::hex);
-  res["cu_idx"] = info.cu_idx;
+  res["cu_idx"] = info.core_idx;
+  res["cu_mask"] = info.cu_mask;
   res["cu_name"] = info.cu_name;
   res["device_id"] = info.device_id;
-  res["name"] = "DPU Core " + std::to_string(info.cu_idx);
+  res["cu_addr"] = to_string(info.cu_addr, std::hex);
+  res["name"] = "DPU Core " + std::to_string(info.core_idx);
   res["DPU Arch"] = info.dpu_arch;
   return res;
 }
@@ -350,6 +350,7 @@ py::dict DPUCZDX8G_VIVADO_FLOW_DEVICE::get_private_data(
   res["fingerprint"] = to_string(info.fingerprint, std::hex);
   res["cu_idx"] = info.cu_idx;
   res["DPU Arch"] = info.dpu_arch;
+  // res["cu_addr"] = to_string(info.cu_addr, std::hex);
   res["is_vivado_flow"] = true;
 
   res["name"] = "DPU Core " + std::to_string(info.cu_idx);
@@ -393,6 +394,7 @@ py::dict DPUCZDX8G_VIVADO_FLOW_DEVICE::read_dpu_register(
   common_registers["HP_ARLEN"] = data_slice(tmp, 0, 8);
 
   // DPU code addr
+  // device_memory->download(&tmp, info.cu_addr + 0x20C, 4);
   common_registers["ADDR_CODE"] = to_string(tmp, std::hex);
   res["common_registers"] = common_registers;
 
@@ -416,7 +418,9 @@ py::dict DPUCZDX8G_VIVADO_FLOW_DEVICE::read_dpu_register(
 py::dict DPUCVDX8G_device::get_private_data(const device_info_struct& info) {
   auto res = DPUCZDX8G_device::get_private_data(info);
 
-  auto read_res = read_register(info.cu_handle, info.cu_name, 0, {0x134});
+  auto read_res =
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, {0x134});
+  //                                                           "BATCH_N"
   res["DPU Batch Number"] = data_slice(read_res[0], 0, 4);
   return res;
 }
@@ -479,7 +483,7 @@ DPUCV2DX8G_device::DPUCV2DX8G_device()
 // DPUCZDX8G_device
 py::dict DPUCZDX8G_device::get_public_data(const device_info_struct& info,
                                            size_t core_count) {
-  auto read_res = read_register(info.cu_handle, info.cu_name, 0,
+  auto read_res = read_register(info.cu_handle, info.cu_idx, info.cu_addr,
                                 {0x20, 0x108, 0x24, 0x100, 0x104});
   //"SYS","SUB_VERSION","TIMESTAMP","GIT_COMMIT_ID","GIT_COMMIT_TIME"
   py::dict dpu_inf;
@@ -526,7 +530,7 @@ py::dict DPUCZDX8G_device::get_public_data(const device_info_struct& info,
 py::dict DPUCZDX8G_device::get_private_data(const device_info_struct& info) {
   auto res = base_device::get_private_data(info);
 
-  auto read_res = read_register(info.cu_handle, info.cu_name, 0,
+  auto read_res = read_register(info.cu_handle, info.cu_idx, info.cu_addr,
                                 {0x20, 0x28, 0x118, 0x120});
   //                            "SYS","FREQ","LOAD","SAVE"
   std::vector<std::string> ip_type = {"",       "DPU",  "softmax", "sigmoid",
@@ -548,16 +552,16 @@ uint32_t DPUCZDX8G_device::read_aie_reg_value(int addr) {
   unsigned mapped_size = page_size;
   unsigned offset_in_page = (unsigned)addr & (page_size - 1);
   if (offset_in_page + 32 > page_size) {
-    mapped_size *= 2;
+      mapped_size *= 2;
   }
-  unsigned addr_mask = ~(page_size - 1);
+  unsigned addr_mask = ~(page_size -1);
   PhysicalMemory map_addr(addr & addr_mask, mapped_size);
-  MemRegValue<uint32_t> value(&map_addr, offset_in_page);
+  MemRegValue<uint32_t> value(&map_addr,offset_in_page);
   return value.read();
 }
-uint32_t DPUCZDX8G_device::get_aie_freq(std::string dpu_arch_type) {
+uint32_t DPUCZDX8G_device:: get_aie_freq(std::string dpu_arch_type){
   uint32_t aie_freq = 0;
-  // const char *dpu_arch = "DPUCV2DX8G";
+  //const char *dpu_arch = "DPUCV2DX8G";
   int mepll_ctrl_addr, me_core_ref_ctrl;
   int hsm0_ref_ctrl = 0xF1260148;
   int pmcpll_ctrl_addr = 0xf1260040;
@@ -566,50 +570,56 @@ uint32_t DPUCZDX8G_device::get_aie_freq(std::string dpu_arch_type) {
   char idcode_name[10];
   uint32_t idcode_num;
   std::map<uint32_t, int> mepll_base_addr_dict = {
-      {0x4ca8093, 0xf70a0000}, {0x4cd3093, 0xf6d10000}, {0x4cc8093, 0xf6420000},
-      {0x4cc0093, 0xf6300000}, {0x4cd0093, 0xf6d10000}, {0x4c98093, 0xf6d10000},
-      {0x4c9b093, 0xf6d10000}, {0x4c9a093, 0xf6d10000}};
-  FILE* f_handle_id = fopen("/sys/kernel/debug/zynqmp-firmware/pm", "rt+");
+    {0x4ca8093, 0xf70a0000},
+    {0x4cd3093, 0xf6d10000},
+    {0x4cc8093, 0xf6420000},
+    {0x4cc0093, 0xf6300000},
+    {0x4cd0093, 0xf6d10000},
+    {0x4c98093, 0xf6d10000},
+    {0x4c9b093, 0xf6d10000},
+    {0x4c9a093, 0xf6d10000}
+  };
+  FILE *f_handle_id = fopen("/sys/kernel/debug/zynqmp-firmware/pm", "rt+");
   if (!f_handle_id) {
     std::cout << "Err open idcode file failure" << std::endl;
     return aie_freq;
   }
-
-  if (fwrite(idcode_cmd, sizeof(char), 13, f_handle_id) != 13) {
+ 
+  if (fwrite(idcode_cmd,sizeof(char),13, f_handle_id) != 13) {
     std::cout << "Err idcode cmd failure" << std::endl;
     fclose(f_handle_id);
     return aie_freq;
   }
-
+ 
   if (fscanf(f_handle_id, "%s %x", idcode_name, &idcode_num) == 0) {
     std::cout << "Err get idcode failure" << std::endl;
     fclose(f_handle_id);
     return aie_freq;
   }
   fclose(f_handle_id);
-  if ((mepll_base_addr_dict.count(idcode_num & 0xfffffff)) > 0) {
+  if((mepll_base_addr_dict.count(idcode_num & 0xfffffff)) > 0) {
     mepll_ctrl_addr = mepll_base_addr_dict[idcode_num & 0xfffffff] + 0x100;
     me_core_ref_ctrl = mepll_base_addr_dict[idcode_num & 0xfffffff] + 0x138;
   } else {
     return aie_freq;
   }
   uint32_t ref_clk = 0;
-  FILE* f_handle = fopen("/sys/kernel/debug/clk/ref_clk/clk_rate", "rt");
+  FILE *  f_handle = fopen("/sys/kernel/debug/clk/ref_clk/clk_rate", "rt");
   if (!f_handle) {
-    std::cout << "Err open clk file failure!" << std::endl;
+    std::cout <<"Err open clk file failure!" << std::endl;
     return aie_freq;
   }
   if (fscanf(f_handle, "%d", &ref_clk) == 0) {
-    std::cout << "Err: fscanf volt failure" << std::endl;
+    std::cout <<"Err: fscanf volt failure" << std::endl;
     fclose(f_handle);
     return aie_freq;
   }
   fclose(f_handle);
   uint32_t hsm0_ref_value = read_aie_reg_value(hsm0_ref_ctrl);
   uint32_t n_p_pll;
-  if ((hsm0_ref_value & 0x7) == 0) {
+  if((hsm0_ref_value & 0x7) == 0){
     n_p_pll = read_aie_reg_value(pmcpll_ctrl_addr);
-  } else if ((hsm0_ref_value & 0x7) == 3) {
+  } else if((hsm0_ref_value & 0x7) == 3) {
     n_p_pll = read_aie_reg_value(nocpll_ctrl_addr);
   } else {
     std::cout << "get an error value from hsm0" << std::endl;
@@ -627,7 +637,7 @@ uint32_t DPUCZDX8G_device::get_aie_freq(std::string dpu_arch_type) {
   uint32_t me_core = read_aie_reg_value(me_core_ref_ctrl);
   uint32_t me_core_cal = (me_core & 0x3ff00) >> 8;  // bit17:8
   uint32_t mePLL_freq = hsm0_clk * mepll_cal / me_clkoutdiv / me_core_cal;
-  // std::cout << "aie_freq:" << mePLL_freq << std::endl;
+  //std::cout << "aie_freq:" << mePLL_freq << std::endl;
   return mePLL_freq;
 }
 DPUCZDX8G_device::DPUCZDX8G_device(std::vector<std::string> key_i,
@@ -640,8 +650,7 @@ DPUCZDX8G_device::DPUCZDX8G_device(std::vector<std::string> key_i,
           0x180, 0x184, 0x190, 0x194,  //
           0x188, 0x18C, 0x198, 0x19C,  //
           0x48,  0x50,  0x54};
-  if ((std::getenv("TARGET_DEVICE") != nullptr) &&
-      (!strcmp(std::getenv("TARGET_DEVICE"), "V70"))) {
+  if ((std::getenv("TARGET_DEVICE") != nullptr) && (!strcmp(std::getenv("TARGET_DEVICE"), "V70"))) {
     addr.erase(addr.begin());
     key.erase(key.begin());
   }
@@ -662,7 +671,8 @@ py::dict DPUCZDX8G_device::read_dpu_register(const device_info_struct& info) {
   py ::dict res;
   // 1. common_registers
   py::dict common_registers;
-  auto registers = read_register(info.cu_handle, info.cu_name, 0, addr);
+  auto registers =
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, addr);
   auto idx = 0u;
   // AP_REG
   std::map<uint32_t, std::string> ap_status = {
@@ -674,10 +684,9 @@ py::dict DPUCZDX8G_device::read_dpu_register(const device_info_struct& info) {
       ap_status[data_slice(registers[idx], 0, 4)] +
       ap_reset_status[data_slice(registers[idx], 5, 7)];
   idx++;
-  if ((std::getenv("TARGET_DEVICE") != nullptr) &&
-      (!strcmp(std::getenv("TARGET_DEVICE"), "V70"))) {
+  if ((std::getenv("TARGET_DEVICE") != nullptr) && (!strcmp(std::getenv("TARGET_DEVICE"), "V70"))) {
     common_registers["AP status"] = "NULL - Register Limited To Read";
-    idx = 0;
+    idx=0;
   }
   for (auto i = idx; i < idx + 8; i++) {
     common_registers[key[i].c_str()] = registers[i];
@@ -701,7 +710,7 @@ py::dict DPUCZDX8G_device::read_dpu_register(const device_info_struct& info) {
   }
   res["addrs_registers"] = addrs_registers;
   // 3. name
-  res["name"] = "DPU Registers Core " + std::to_string(info.cu_idx);
+  res["name"] = "DPU Registers Core " + std::to_string(info.core_idx);
   return res;
 }
 
@@ -710,7 +719,7 @@ py::dict DPUCZDX8G_device::read_dpu_register(const device_info_struct& info) {
 py::dict DPUCAHX8H_device::get_public_data(const device_info_struct& info,
                                            size_t core_count) {
   auto read_res =
-      read_register(info.cu_handle, info.cu_name, 0, {0x1F0, 0x1F4});
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, {0x1F0, 0x1F4});
 
   auto hard_ver = data_slice(read_res[1], read_res[0]);
   py::dict dpu_inf;
@@ -778,7 +787,8 @@ py::dict DPUCAHX8H_device::read_dpu_register(const device_info_struct& info) {
   py ::dict res;
   // 1. common_registers
   py::dict common_registers;
-  auto registers = read_register(info.cu_handle, info.cu_name, 0, addr);
+  auto registers =
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, addr);
   auto idx = 0u;
   // AP_REG
   std::map<uint32_t, std::string> ap_status = {
@@ -806,7 +816,7 @@ py::dict DPUCAHX8H_device::read_dpu_register(const device_info_struct& info) {
   }
   res["addrs_registers"] = addrs_registers;
   // 3. name
-  res["name"] = "DPU Registers Core " + std::to_string(info.cu_idx);
+  res["name"] = "DPU Registers Core " + std::to_string(info.core_idx);
   return res;
 }
 
@@ -815,7 +825,7 @@ py::dict DPUCAHX8H_device::read_dpu_register(const device_info_struct& info) {
 py::dict DPUCVDX8H_device::get_public_data(const device_info_struct& info,
                                            size_t core_count) {
   auto read_res =
-      read_register(info.cu_handle, info.cu_name, 0, {0x1F0, 0x1F4});
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, {0x1F0, 0x1F4});
 
   auto hard_ver = data_slice(read_res[1], read_res[0]);
   py::dict dpu_inf;
@@ -927,7 +937,8 @@ py::dict DPUCVDX8H_device::read_dpu_register(const device_info_struct& info) {
   py ::dict res;
   // 1. common_registers
   py::dict common_registers;
-  auto registers = read_register(info.cu_handle, info.cu_name, 0, addr);
+  auto registers =
+      read_register(info.cu_handle, info.cu_idx, info.cu_addr, addr);
   auto idx = 0u;
   // AP_REG
   std::map<uint32_t, std::string> ap_status = {{0b00001, "start"},
@@ -959,6 +970,6 @@ py::dict DPUCVDX8H_device::read_dpu_register(const device_info_struct& info) {
   }
   res["addrs_registers"] = addrs_registers;
   // 3. name
-  res["name"] = "DPU Registers Core " + std::to_string(info.cu_idx);
+  res["name"] = "DPU Registers Core " + std::to_string(info.core_idx);
   return res;
 }

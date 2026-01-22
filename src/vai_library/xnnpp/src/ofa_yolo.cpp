@@ -64,7 +64,8 @@ static void detect(vector<vector<float>>& boxes, int8_t* result, int height,
   LOG_IF(INFO, ENV_PARAM(ENABLE_OFAYOLO_DEBUG))
       << " height " << height << " width " << width << " num " << num
       << " scale " << scale;
-  auto& yolo_params = config.ofa_yolo_param();
+  auto& ofa_yolo_params = config.yolo_v5_param();
+  auto& yolo_params = ofa_yolo_params.yolo_param();
 
   auto num_classes = yolo_params.num_classes();
   auto anchor_cnt = yolo_params.anchorcnt();
@@ -73,8 +74,8 @@ static void detect(vector<vector<float>>& boxes, int8_t* result, int height,
                                    yolo_params.biases().end());
   auto conf_desigmoid = -logf(1.0f / conf_thresh - 1.0f) / scale;
 
-  auto stride = std::vector<float>(yolo_params.stride().begin(),
-                                   yolo_params.stride().end());
+  auto stride = std::vector<float>(ofa_yolo_params.stride().begin(),
+                                   ofa_yolo_params.stride().end());
   int conf_box = 5 + num_classes;
   for (int h = 0; h < height; ++h) {
     for (int w = 0; w < width; ++w) {
@@ -120,9 +121,10 @@ std::vector<OFAYOLOResult> ofa_yolo_post_process(
         output_tensors_unsorted,
     const vitis::ai::proto::DpuModelParam& config, const std::vector<int>& ws,
     const std::vector<int>& hs) {
-  auto& yolo_params = config.ofa_yolo_param();
-  auto max_boxes_num = yolo_params.max_boxes_num();
-  auto max_nms_num = yolo_params.max_nms_num();
+  auto& ofa_yolo_params = config.yolo_v5_param();
+  auto& yolo_params = ofa_yolo_params.yolo_param();
+  auto max_boxes_num = ofa_yolo_params.max_boxes_num();
+  auto max_nms_num = ofa_yolo_params.max_nms_num();
 
   auto num_classes = yolo_params.num_classes();
   auto conf_thresh = yolo_params.conf_threshold();

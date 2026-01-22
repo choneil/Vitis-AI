@@ -176,10 +176,8 @@ vai_add_library(
   src/multitaskv3/ssd_detector.cpp
   src/yolov2.cpp
   src/yolov3.cpp
-  src/yolov4.cpp
   src/ofa_yolo.cpp
   src/yolovx.cpp
-  src/yolov5.cpp
   src/yolov6.cpp
   src/yolov7.cpp
   src/yolov8.cpp

@@ -51,7 +51,7 @@ static void detect(vector<vector<float>>& boxes, int8_t* result, int height,
             -logf(obj_score / conf_thresh - 1.0f) / scale;
         int max_p = -1;
 
-        if (yolo_type == 1) {  // 1:YOLOX_NANO
+        if (yolo_type == 3) {  // YOLOX_NANO
           box[0] = box[0] - box[2] * 0.5;
           box[1] = box[1] - box[3] * 0.5;
         }
@@ -76,7 +76,8 @@ std::vector<YOLOvXResult> yolovx_post_process(
         output_tensors_unsorted,
     const vitis::ai::proto::DpuModelParam& config,
     const std::vector<float>& img_scale) {
-  auto& yolo_params = config.yolo_vx_param();
+  auto& yolo_v5_params = config.yolo_v5_param();
+  auto& yolo_params = yolo_v5_params.yolo_param();
   auto yolo_type = yolo_params.type();
 
   auto num_classes = yolo_params.num_classes();
@@ -85,8 +86,8 @@ std::vector<YOLOvXResult> yolovx_post_process(
   auto conf_thresh = yolo_params.conf_threshold();
   auto iou_type=yolo_params.iou_type();
 
-  std::vector<float> stride(yolo_params.stride().begin(),
-                            yolo_params.stride().end());
+  std::vector<float> stride(yolo_v5_params.stride().begin(),
+                            yolo_v5_params.stride().end());
 
   std::vector<std::string> layername(yolo_params.layer_name().begin(),
                                      yolo_params.layer_name().end());
@@ -157,7 +158,7 @@ std::vector<YOLOvXResult> yolovx_post_process(
         yolo_res.label = r[4];
         yolo_res.box.resize(4);
 
-        if (yolo_type == 1) {  // 1: YOLOV5_NANO
+        if (yolo_type == 3) {  // 3: YOLOV5_NANO
           yolo_res.box[0] = r[0] / img_scale[k];
           yolo_res.box[1] = r[1] / img_scale[k];
           yolo_res.box[2] = yolo_res.box[0] + r[2] / img_scale[k];
